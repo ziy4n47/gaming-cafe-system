@@ -23,13 +23,21 @@ This system keeps PanCafe's useful part (knowing what happened on each PC) while
 
 ---
 
-## What's IN v1 vs later
+## What's in v1
 
-**In v1:** session tracking (start/stop, per-PC), switching a customer between PCs within one visit, "PC busy" validation, walk-in cash/UPI billing, cashier shift cash count, owner remote view, immutable log.
+All of the following are **in scope for v1** — none of it is deferred. It's built in a sequence (see Build sequence) because the pieces depend on each other, but it's all part of the first version:
 
-**Later phases:** member prepaid wallets (advance / outstanding balances), petty cash & remittance approvals, richer reports, optional member self-view, optional network-watcher.
+- Session tracking (start/stop, per-PC), switching a customer between PCs within one visit, "PC busy" validation, floor view.
+- Walk-in cash/UPI billing, with UPI declaration + owner approval.
+- Manual goodwill discounts — a cashier may apply up to an owner-set cap (in settings); anything above needs owner approval. Every discount is its own recorded, reportable line (amount, reason, who, when), enforced server-side.
+- Cashier shift cash count (opening float → expected → counted → variance).
+- Member prepaid wallets — advance / outstanding balances, deposits gated by owner approval. Includes **write-offs** as a distinct, owner-only transaction type (bad debt / goodwill), recorded as a loss — never as a payment or revenue — so member balances stay correct and forgiven amounts are visible separately.
+- Petty cash & remittance, with manager/owner approval.
+- Reports (revenue, cash vs UPI, PC utilisation, cashier variance, member balances).
+- Optional member self-view — a member checking their own balance/history, secured by a simple PIN or private link (no OTP).
+- Immutable, append-only log throughout.
 
-**Deliberately dropped:** POS / food-and-drink sales (service-only business). Full double-entry accounting (a simpler cash ledger is enough for now; double-entry can layer on later if ever needed).
+**Deliberately dropped:** POS / food-and-drink sales (service-only business). Full double-entry accounting (a simpler cash ledger is enough for now; double-entry can layer on later if ever needed). A network-watcher device to *detect* unlogged PC use remains a possible v1.5 hardware add-on.
 
 ---
 
@@ -39,7 +47,7 @@ Time and money are tracked **separately**.
 
 - **Every session** records usage: who, which PC(s), how long. This powers the floor view, PC switching, and the busy/free validation.
 - **Only walk-in sessions** carry an amount and a payment. Walk-ins pay per visit.
-- **Members do not have per-session revenue.** They may be in advance or carry an outstanding balance, so per-session billing makes no sense for them. Their money lives in their account balance, handled in a later phase.
+- **Members do not have per-session revenue.** They may be in advance or carry an outstanding balance, so per-session billing makes no sense for them. Their money lives in their account balance, handled by the member wallet (build step 4).
 
 So: members = usage record only. Walk-ins = usage record + payment.
 
@@ -94,12 +102,19 @@ Owner (phone)          →  same web app, remote, anytime
 
 ---
 
-## Build order
+## Build sequence
 
-1. **Session tracker** — pcs, sessions, segments; start/stop; switching; busy/free validation; floor view. ← current phase
-2. **Cash & payments** — walk-in billing, UPI declaration + owner approval, shift cash count.
-3. **Members & wallet** — accounts, advance/outstanding balances.
-4. **Petty cash, remittance, reports, polish** — approvals, owner reports, staff PIN.
+Everything above is in v1. It's built in this order because each step depends on the ones before it — you can't build wallets before the members and sessions they attach to exist, or reports before there's data to report on. Each step is finished and tested before the next begins, so there's always something working.
+
+1. **Session tracker** — pcs, sessions, segments; start/stop; switching; busy/free validation; floor view. ← building now
+2. **Customers / members** — the member roster that sessions and wallets attach to.
+3. **Walk-in billing & payments** — cash/UPI billing, UPI declaration + owner approval, and manual goodwill discounts (cashier cap + owner approval above it, via the approval engine).
+4. **Member wallets** — deposits (owner-approved), advance/outstanding balances, deduction on member sessions, and owner-only write-offs (bad debt / goodwill) as a distinct transaction type.
+5. **Cashier shift** — opening float, expected vs counted cash, variance.
+6. **Petty cash & remittance** — the approval + cash-movement flow.
+7. **Reports** — built on top of the data the earlier steps produce.
+8. **Member self-view** — PIN/link balance lookup.
+9. **Polish** — staff PIN, owner dashboard, daily backup export.
 
 ---
 
