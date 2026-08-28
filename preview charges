@@ -1,0 +1,3 @@
+select * from preview_charge(360);   -- expect 300 charged, 60 free, ₹300
+select * from preview_charge(400);   -- expect 340 charged, 60 free, ₹340
+select * from preview_charge(720);   -- expect 600 charged, 120 free, ₹600
