@@ -205,6 +205,23 @@
   .pc-picker button { background: var(--surface-2); color: var(--text); padding: 12px 0; font-family: "JetBrains Mono", monospace; font-weight: 600; }
   .note { font-size: 12px; color: var(--muted); margin-top: 14px; }
   .bill-amount { font-family: "JetBrains Mono", monospace; font-size: 42px; font-weight: 700; letter-spacing: -0.02em; }
+
+  /* ---------- tabs + history ---------- */
+  .tabs { display: flex; gap: 6px; margin-bottom: 18px; }
+  .tab { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 8px 16px; border-radius: 999px; font-size: 14px; }
+  .tab.active { background: var(--surface); color: var(--text); border-color: var(--accent); }
+  .history-list { display: flex; flex-direction: column; gap: 8px; }
+  .hist-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .hist-pc { font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 14px; }
+  .hist-cust { font-size: 14px; margin-top: 1px; }
+  .hist-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .hist-amt { font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 17px; text-align: right; }
+  .hist-amt .hist-min { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+  .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); vertical-align: middle; }
+  .badge-cash, .badge-ok { color: var(--free); border-color: rgba(52,211,153,.4); }
+  .badge-pend { color: var(--busy); border-color: rgba(245,167,66,.4); }
+  .badge-rej  { color: var(--danger); border-color: rgba(240,104,95,.4); }
+  .badge-unpaid { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -235,12 +252,38 @@
   </div>
 
   <div class="wrap">
-    <div class="status-row">
-      <h1>Floor</h1>
-      <span class="counts" id="counts"></span>
+    <div class="tabs">
+      <button class="tab active" data-tab="floor">Floor</button>
+      <button class="tab" data-tab="history">Recent sessions</button>
+      <button class="tab" data-tab="approvals" id="tab-approvals" style="display:none;">Approvals</button>
     </div>
-    <div class="grid" id="grid"></div>
-    <p class="hint" id="hint"></p>
+
+    <div id="floor-panel">
+      <div class="status-row">
+        <h1>Floor</h1>
+        <span class="counts" id="counts"></span>
+      </div>
+      <div class="grid" id="grid"></div>
+      <p class="hint" id="hint"></p>
+    </div>
+
+    <div id="history-panel" style="display:none;">
+      <div class="status-row">
+        <h1>Recent sessions</h1>
+        <span class="counts" id="hist-meta"></span>
+      </div>
+      <div class="history-list" id="history-list"></div>
+      <p class="hint" id="hist-hint"></p>
+    </div>
+
+    <div id="approvals-panel" style="display:none;">
+      <div class="status-row">
+        <h1>UPI approvals</h1>
+        <span class="counts" id="appr-meta"></span>
+      </div>
+      <div class="history-list" id="approvals-list"></div>
+      <p class="hint" id="appr-hint"></p>
+    </div>
   </div>
 </div>
 
@@ -274,6 +317,8 @@ const modal     = document.getElementById("modal");
 /* in-memory picture of the floor */
 let pcs = [];          // [{id, code}]
 let busyByPc = {};     // pc_id -> {session_id, customer, sessionStart(Date)}
+let currentRole = null;
+let cafeUpiId = null;
 
 /* =========================================================
    AUTH
@@ -316,11 +361,20 @@ async function startApp() {
 
   // read this staff member's role (RLS lets you read only your own row)
   const { data: staff } = await sb.from("staff").select("role").eq("id", user.id).single();
+  currentRole = staff ? staff.role : null;
   document.getElementById("who-email").textContent = user.email;
-  document.getElementById("who-role").textContent = staff ? staff.role : "—";
+  document.getElementById("who-role").textContent = currentRole || "—";
+
+  // owner-only: reveal the Approvals tab
+  if (currentRole === "owner") document.getElementById("tab-approvals").style.display = "";
+
+  // load café settings (the UPI ID customers pay into)
+  const { data: cfg } = await sb.from("settings").select("upi_id").eq("id", 1).single();
+  cafeUpiId = cfg ? cfg.upi_id : null;
 
   loginView.style.display = "none";
   appView.style.display = "block";
+  setupTabs();
 
   await loadFloor();
   // refresh from the database every 5s so multiple devices stay in sync
@@ -543,23 +597,36 @@ async function endSession(sessionId) {
   const mmsg = document.getElementById("modal-msg");
   mmsg.textContent = "Ending…"; mmsg.className = "msg";
 
-  // Billing runs on the SERVER, not here: we just say "end this session"
-  // and the database computes the minutes, applies the discount, and
-  // stores the amount. The browser never decides what a session costs.
+  // Billing runs on the SERVER. We just ask to end the session; the
+  // database computes minutes, applies the discount, stores the amount.
   const { data, error } = await sb.rpc("end_session", { p_session_id: sessionId });
   if (error) { mmsg.textContent = error.message; mmsg.className = "msg error"; return; }
 
   await loadFloor();
 
   const r = data && data[0];
-  if (r && r.amount !== null && r.amount !== undefined) {
-    showEndSummary(r);   // walk-in: show the bill
+  const amount = r ? r.amount : null;
+
+  if (amount === null || amount === undefined) {
+    closeOverlay();          // member: no per-visit charge (wallet handled later)
+  } else if (Number(amount) <= 0) {
+    showNoCharge(r);         // 0-minute session: nothing to collect
   } else {
-    closeOverlay();      // member: no per-visit charge
+    showBill(sessionId, r);  // walk-in with a charge: collect payment
   }
 }
 
-function showEndSummary(r) {
+function showNoCharge(r) {
+  modal.innerHTML = `
+    <h2>Session ended</h2>
+    <p class="modal-sub">No charge</p>
+    <p class="note" style="margin-top:2px">${r.total_minutes} min played</p>
+    <button class="btn-primary btn-block" data-close style="margin-top:18px;">Done</button>`;
+  openOverlay();
+}
+
+/* Step 1: show the bill and how to settle it */
+function showBill(sessionId, r) {
   modal.innerHTML = `
     <h2>Session ended</h2>
     <p class="modal-sub">Amount to collect</p>
@@ -567,7 +634,57 @@ function showEndSummary(r) {
     <p class="note" style="margin-top:2px">
       ${r.total_minutes} min played · ${r.chargeable_minutes} charged · ${r.discount_minutes} free
     </p>
-    <button class="btn-primary btn-block" data-close style="margin-top:18px;">Done</button>`;
+    <div id="modal-msg" class="msg" style="margin-top:8px"></div>
+    <p class="note" style="margin-top:2px">How did they pay?</p>
+    <div class="row">
+      <button class="btn-surface btn-block" id="pay-cash">Cash</button>
+      <button class="btn-primary btn-block" id="pay-upi">UPI</button>
+    </div>
+    <button class="btn-ghost btn-block" data-close style="margin-top:10px;">Skip for now</button>`;
+  openOverlay();
+  document.getElementById("pay-cash").addEventListener("click", () => recordPayment(sessionId, "cash"));
+  document.getElementById("pay-upi").addEventListener("click", () => showUpiForm(sessionId, r));
+}
+
+/* Step 2 (UPI only): show where to pay + capture the reference */
+function showUpiForm(sessionId, r) {
+  const upiLine = cafeUpiId
+    ? `Customer pays to <b>${escapeHtml(cafeUpiId)}</b>`
+    : `<span style="color:var(--busy)">Set your UPI ID in the settings table first.</span>`;
+  modal.innerHTML = `
+    <h2>UPI · ₹${Number(r.amount).toFixed(2)}</h2>
+    <p class="modal-sub">${upiLine}</p>
+    <label for="upi-ref">UPI reference / UTR</label>
+    <input id="upi-ref" type="text" placeholder="e.g. 4417xxxxxx" />
+    <div id="modal-msg" class="msg"></div>
+    <div class="row">
+      <button class="btn-surface btn-block" data-close>Cancel</button>
+      <button class="btn-primary btn-block" id="upi-confirm">Record UPI</button>
+    </div>
+    <p class="note">Recorded as pending until the owner confirms it in his UPI account.</p>`;
+  openOverlay();
+  document.getElementById("upi-ref").focus();
+  document.getElementById("upi-confirm").addEventListener("click", () =>
+    recordPayment(sessionId, "upi", document.getElementById("upi-ref").value.trim()));
+}
+
+/* send to the server (cash = settled, upi = pending) */
+async function recordPayment(sessionId, method, reference) {
+  const mmsg = document.getElementById("modal-msg");
+  if (mmsg) { mmsg.textContent = "Recording…"; mmsg.className = "msg"; }
+  const { error } = await sb.rpc("record_payment", {
+    p_session_id: sessionId, p_method: method, p_reference: reference || null
+  });
+  if (error) { if (mmsg) { mmsg.textContent = error.message; mmsg.className = "msg error"; } return; }
+  showPaid(method);
+}
+
+function showPaid(method) {
+  const label = method === "cash" ? "Cash received" : "UPI recorded · pending owner approval";
+  modal.innerHTML = `
+    <h2>Payment recorded</h2>
+    <p class="modal-sub">${label}</p>
+    <button class="btn-primary btn-block" data-close style="margin-top:14px;">Done</button>`;
   openOverlay();
 }
 
@@ -580,6 +697,138 @@ overlay.addEventListener("click", e => {
   if (e.target === overlay || e.target.hasAttribute("data-close")) closeOverlay();
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeOverlay(); });
+
+/* =========================================================
+   TABS + RECENT SESSIONS (history)
+   The history is already in the sessions table — this just
+   reads it back so a cashier who missed a bill can find it.
+   ========================================================= */
+function setupTabs() {
+  document.querySelectorAll(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      const which = tab.getAttribute("data-tab");
+      document.getElementById("floor-panel").style.display     = which === "floor"     ? "block" : "none";
+      document.getElementById("history-panel").style.display   = which === "history"   ? "block" : "none";
+      document.getElementById("approvals-panel").style.display = which === "approvals" ? "block" : "none";
+      if (which === "history")   loadHistory();
+      if (which === "approvals") loadApprovals();
+    });
+  });
+}
+
+async function loadHistory() {
+  const list = document.getElementById("history-list");
+  const meta = document.getElementById("hist-meta");
+  const hint = document.getElementById("hist-hint");
+  list.innerHTML = ""; meta.textContent = ""; hint.textContent = "Loading…";
+
+  // map PC id -> code, so we can show which machine(s) a visit used
+  const pcCodeById = {};
+  pcs.forEach(p => pcCodeById[p.id] = p.code);
+
+  const { data, error } = await sb
+    .from("sessions")
+    .select("id, customer_type, customer_name, ended_at, total_minutes, chargeable_minutes, discount_minutes, amount, session_segments ( pc_id, started_at ), payments ( method, status )")
+    .not("ended_at", "is", null)
+    .order("ended_at", { ascending: false })
+    .limit(40);
+
+  if (error) { hint.textContent = error.message; return; }
+  if (!data.length) { hint.textContent = "No sessions yet."; return; }
+  hint.textContent = "";
+  meta.innerHTML = `last <b>${data.length}</b>`;
+
+  list.innerHTML = data.map(r => {
+    const segs = (r.session_segments || []).slice()
+      .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+    const codes = [...new Set(segs.map(s => pcCodeById[s.pc_id]).filter(Boolean))];
+    const pcLabel  = codes.length ? codes.join(" → ") : "—";
+    const isMember = r.customer_type === "member";
+    const customer = r.customer_name || (isMember ? "Member" : "Walk-in");
+    const amountText = (r.amount === null || r.amount === undefined) ? "—" : "₹" + Number(r.amount).toFixed(2);
+    const freeBit = (r.discount_minutes > 0) ? ` (${r.discount_minutes} free)` : "";
+    const sub = isMember
+      ? `${fmtWhen(r.ended_at)} · ${r.total_minutes ?? 0} min · member`
+      : `${fmtWhen(r.ended_at)} · ${r.total_minutes ?? 0} min${freeBit}`;
+    const amtSub = isMember ? "" : `<span class="hist-min">${r.chargeable_minutes ?? 0} charged</span>`;
+    const pay = (r.payments && r.payments[0]) || null;
+    const payBadge = paymentBadge(pay, isMember, r.amount);
+    return `
+      <div class="hist-row">
+        <div>
+          <div class="hist-pc">${escapeHtml(pcLabel)} ${payBadge}</div>
+          <div class="hist-cust">${escapeHtml(customer)}</div>
+          <div class="hist-sub">${escapeHtml(sub)}</div>
+        </div>
+        <div class="hist-amt">${amountText}${amtSub}</div>
+      </div>`;
+  }).join("");
+}
+
+function fmtWhen(iso) {
+  return new Date(iso).toLocaleString([], { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" });
+}
+
+/* small coloured tag showing how a session was paid */
+function paymentBadge(pay, isMember, amount) {
+  if (isMember) return "";
+  if (amount !== null && Number(amount) <= 0) return "";
+  if (!pay) return `<span class="badge badge-unpaid">unpaid</span>`;
+  if (pay.method === "cash") return `<span class="badge badge-cash">cash</span>`;
+  if (pay.status === "approved") return `<span class="badge badge-ok">UPI ✓</span>`;
+  if (pay.status === "rejected") return `<span class="badge badge-rej">UPI ✕</span>`;
+  return `<span class="badge badge-pend">UPI ⏳</span>`;
+}
+
+/* =========================================================
+   APPROVALS (owner only): pending UPI payments to confirm
+   against the real bank account.
+   ========================================================= */
+async function loadApprovals() {
+  const list = document.getElementById("approvals-list");
+  const meta = document.getElementById("appr-meta");
+  const hint = document.getElementById("appr-hint");
+  list.innerHTML = ""; meta.textContent = ""; hint.textContent = "Loading…";
+
+  const { data, error } = await sb
+    .from("payments")
+    .select("id, amount, reference, created_at, sessions ( customer_name )")
+    .eq("method", "upi").eq("status", "pending")
+    .order("created_at", { ascending: false });
+
+  if (error) { hint.textContent = error.message; return; }
+  if (!data.length) { hint.textContent = "No UPI payments waiting for approval."; return; }
+  hint.textContent = "";
+  meta.innerHTML = `<b>${data.length}</b> pending`;
+
+  list.innerHTML = data.map(p => {
+    const who = (p.sessions && p.sessions.customer_name) || "Walk-in";
+    return `
+      <div class="hist-row">
+        <div>
+          <div class="hist-cust">₹${Number(p.amount).toFixed(2)} · ${escapeHtml(who)}</div>
+          <div class="hist-sub">Ref ${escapeHtml(p.reference || "—")} · ${fmtWhen(p.created_at)}</div>
+        </div>
+        <div class="row" style="margin:0;">
+          <button class="btn-surface" data-reject="${p.id}">Reject</button>
+          <button class="btn-primary" data-approve="${p.id}">Approve</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  list.querySelectorAll("[data-approve]").forEach(b =>
+    b.addEventListener("click", () => decidePayment(Number(b.getAttribute("data-approve")), true)));
+  list.querySelectorAll("[data-reject]").forEach(b =>
+    b.addEventListener("click", () => decidePayment(Number(b.getAttribute("data-reject")), false)));
+}
+
+async function decidePayment(paymentId, approve) {
+  const { error } = await sb.rpc("approve_payment", { p_payment_id: paymentId, p_approve: approve });
+  if (error) { alert(error.message); return; }
+  loadApprovals();
+}
 
 /* tiny helper: keep typed names safe to drop into HTML */
 function escapeHtml(str) {
