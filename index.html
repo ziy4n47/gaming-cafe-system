@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gaming Café — Floor</title>
+
+<!-- Fonts: a characterful display face, a mono for codes/timers -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+<style>
+  /* ---------- design tokens ---------- */
+  :root {
+    --bg: #0d1017;
+    --surface: #161b26;
+    --surface-2: #1e2533;
+    --line: #2a3242;
+    --text: #e6ebf4;
+    --muted: #8b95a7;
+    --free: #34d399;   /* calm teal-green = available */
+    --busy: #f5a742;   /* warm amber = in use       */
+    --accent: #5b8dff; /* interactive / brand        */
+    --danger: #f0685f;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono { font-family: "JetBrains Mono", monospace; }
+
+  /* ---------- login ---------- */
+  #login-view {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .login-card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+  }
+  .brand {
+    font-family: "Space Grotesk", sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px;
+  }
+  .brand .dot { color: var(--accent); }
+  .login-sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+  input[type=email], input[type=password], input[type=text] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--text);
+    padding: 11px 12px;
+    font-size: 15px;
+    margin-bottom: 16px;
+  }
+  input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 9px;
+    font-size: 15px;
+    font-weight: 600;
+    transition: filter .15s ease;
+  }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:hover { filter: brightness(1.08); }
+  .btn-primary { background: var(--accent); color: #fff; padding: 12px; width: 100%; }
+  .btn-block { width: 100%; }
+
+  .msg { font-size: 13px; margin: 4px 0 12px; min-height: 18px; }
+  .msg.error { color: var(--danger); }
+
+  /* ---------- app shell ---------- */
+  #app-view { display: none; }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .topbar .brand { font-size: 17px; }
+  .who { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+  .role-chip {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 7px 12px; font-size: 13px; }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+  .status-row {
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .status-row h1 {
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 20px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .counts { color: var(--muted); font-size: 14px; }
+  .counts b { color: var(--text); }
+
+  /* ---------- floor grid ---------- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+  }
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--free);
+    border-radius: var(--radius);
+    padding: 16px;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    min-height: 118px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: border-color .15s ease, transform .08s ease;
+  }
+  .tile:hover { transform: translateY(-2px); }
+  .tile.busy { border-left-color: var(--busy); background: linear-gradient(180deg, rgba(245,167,66,0.07), rgba(245,167,66,0) 60%), var(--surface); }
+
+  .tile-top { display: flex; align-items: center; justify-content: space-between; }
+  .pc-code { font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 15px; letter-spacing: .02em; }
+  .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--free); }
+  .tile.busy .status-dot { background: var(--busy); animation: pulse 2s infinite; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .tile.busy .status-dot { animation: none; } }
+
+  .tile-state { font-size: 13px; color: var(--muted); }
+  .tile.busy .customer { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+  .tile .timer { font-family: "JetBrains Mono", monospace; font-size: 22px; font-weight: 500; letter-spacing: -0.01em; }
+  .tile.free .free-label { font-size: 13px; color: var(--free); font-weight: 600; }
+
+  .hint { color: var(--muted); font-size: 13px; margin-top: 18px; text-align: center; }
+
+  /* ---------- modal ---------- */
+  .overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(6,8,12,0.7);
+    z-index: 20;
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+  .modal h2 { font-family: "Space Grotesk", sans-serif; font-size: 18px; margin: 0 0 4px; }
+  .modal .modal-sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  .modal .row { display: flex; gap: 10px; margin-top: 8px; }
+  .btn-danger { background: var(--danger); color: #fff; padding: 12px; }
+  .btn-surface { background: var(--surface-2); color: var(--text); padding: 12px; }
+  .pc-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 4px; }
+  .pc-picker button { background: var(--surface-2); color: var(--text); padding: 12px 0; font-family: "JetBrains Mono", monospace; font-weight: 600; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 14px; }
+  .bill-amount { font-family: "JetBrains Mono", monospace; font-size: 42px; font-weight: 700; letter-spacing: -0.02em; }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login-view">
+  <div class="login-card">
+    <p class="brand">Floor<span class="dot">.</span></p>
+    <p class="login-sub">Staff sign in</p>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" placeholder="you@example.com" />
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    <div id="login-msg" class="msg"></div>
+    <button class="btn-primary" id="login-btn">Sign in</button>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app-view">
+  <div class="topbar">
+    <p class="brand">Floor<span class="dot">.</span></p>
+    <div class="who">
+      <span id="who-email"></span>
+      <span class="role-chip" id="who-role"></span>
+      <button class="btn-ghost" id="logout-btn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="status-row">
+      <h1>Floor</h1>
+      <span class="counts" id="counts"></span>
+    </div>
+    <div class="grid" id="grid"></div>
+    <p class="hint" id="hint"></p>
+  </div>
+</div>
+
+<!-- ============ MODAL ============ -->
+<div class="overlay" id="overlay">
+  <div class="modal" id="modal"><!-- filled by JS --></div>
+</div>
+
+<!-- Supabase client library -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* =========================================================
+   CONFIG  —  these two values connect this page to YOUR
+   database. The publishable key is safe to ship in the
+   browser; Row Level Security is what actually protects the
+   data (only logged-in staff can read/write).
+   ========================================================= */
+const SUPABASE_URL = "https://tknwackkxdnirvyinmpk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_mhIpGIYVShJV55huBVPvZQ_7rtX6AmH";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+/* ---------- element refs ---------- */
+const loginView = document.getElementById("login-view");
+const appView   = document.getElementById("app-view");
+const loginMsg  = document.getElementById("login-msg");
+const grid      = document.getElementById("grid");
+const overlay   = document.getElementById("overlay");
+const modal     = document.getElementById("modal");
+
+/* in-memory picture of the floor */
+let pcs = [];          // [{id, code}]
+let busyByPc = {};     // pc_id -> {session_id, customer, sessionStart(Date)}
+
+/* =========================================================
+   AUTH
+   ========================================================= */
+document.getElementById("login-btn").addEventListener("click", signIn);
+document.getElementById("password").addEventListener("keydown", e => { if (e.key === "Enter") signIn(); });
+document.getElementById("logout-btn").addEventListener("click", async () => {
+  await sb.auth.signOut();
+  location.reload();
+});
+
+async function signIn() {
+  loginMsg.textContent = "";
+  loginMsg.className = "msg";
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  if (!email || !password) { showLoginError("Enter your email and password."); return; }
+
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) { showLoginError(error.message); return; }
+  await startApp();
+}
+
+function showLoginError(text) {
+  loginMsg.textContent = text;
+  loginMsg.className = "msg error";
+}
+
+/* On page load, resume an existing session if there is one */
+(async function boot() {
+  const { data } = await sb.auth.getSession();
+  if (data.session) await startApp();
+})();
+
+/* =========================================================
+   APP START  —  learn who is logged in, then draw the floor
+   ========================================================= */
+async function startApp() {
+  const { data: { user } } = await sb.auth.getUser();
+
+  // read this staff member's role (RLS lets you read only your own row)
+  const { data: staff } = await sb.from("staff").select("role").eq("id", user.id).single();
+  document.getElementById("who-email").textContent = user.email;
+  document.getElementById("who-role").textContent = staff ? staff.role : "—";
+
+  loginView.style.display = "none";
+  appView.style.display = "block";
+
+  await loadFloor();
+  // refresh from the database every 5s so multiple devices stay in sync
+  setInterval(() => { if (!overlay.classList.contains("open")) loadFloor(); }, 5000);
+  // tick the visible timers every second (no database call)
+  setInterval(tickTimers, 1000);
+}
+
+/* =========================================================
+   LOAD FLOOR  —  busy/free is COMPUTED, never stored:
+   a PC is busy if it has an OPEN segment (ended_at is null).
+   ========================================================= */
+async function loadFloor() {
+  // 1. the machine roster
+  const { data: pcData, error: pcErr } = await sb
+    .from("pcs").select("id, code").eq("is_active", true).order("code");
+  if (pcErr) { console.error(pcErr); return; }
+  pcs = pcData;
+
+  // 2. every OPEN segment + its session details
+  const { data: segs, error: segErr } = await sb
+    .from("session_segments")
+    .select("pc_id, session_id, sessions ( customer_type, customer_name, started_at )")
+    .is("ended_at", null);
+  if (segErr) { console.error(segErr); return; }
+
+  // 3. build the busy map
+  busyByPc = {};
+  segs.forEach(s => {
+    const name = s.sessions.customer_name || (s.sessions.customer_type === "member" ? "Member" : "Walk-in");
+    busyByPc[s.pc_id] = {
+      session_id: s.session_id,
+      customer: name,
+      sessionStart: new Date(s.sessions.started_at),
+    };
+  });
+
+  render();
+}
+
+/* =========================================================
+   RENDER
+   ========================================================= */
+function render() {
+  const busyCount = Object.keys(busyByPc).length;
+  const freeCount = pcs.length - busyCount;
+  document.getElementById("counts").innerHTML =
+    `<b>${freeCount}</b> free · <b>${busyCount}</b> in use`;
+  document.getElementById("hint").textContent =
+    busyCount === 0 ? "All machines free. Tap a machine to start a session." : "";
+
+  grid.innerHTML = "";
+  pcs.forEach(pc => {
+    const busy = busyByPc[pc.id];
+    const tile = document.createElement("button");
+    tile.className = "tile " + (busy ? "busy" : "free");
+
+    if (busy) {
+      tile.innerHTML = `
+        <div class="tile-top">
+          <span class="pc-code">${pc.code}</span>
+          <span class="status-dot"></span>
+        </div>
+        <div>
+          <div class="customer">${escapeHtml(busy.customer)}</div>
+          <div class="timer" data-start="${busy.sessionStart.getTime()}">00:00:00</div>
+        </div>`;
+      tile.addEventListener("click", () => openBusyModal(pc));
+    } else {
+      tile.innerHTML = `
+        <div class="tile-top">
+          <span class="pc-code">${pc.code}</span>
+          <span class="status-dot"></span>
+        </div>
+        <div class="free-label">Free</div>`;
+      tile.addEventListener("click", () => openFreeModal(pc));
+    }
+    grid.appendChild(tile);
+  });
+  tickTimers();
+}
+
+/* update the HH:MM:SS text on each busy tile */
+function tickTimers() {
+  document.querySelectorAll(".timer").forEach(el => {
+    const start = Number(el.getAttribute("data-start"));
+    el.textContent = formatDuration(Date.now() - start);
+  });
+}
+
+function formatDuration(ms) {
+  const total = Math.floor(ms / 1000);
+  const h = String(Math.floor(total / 3600)).padStart(2, "0");
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const s = String(total % 60).padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
+
+/* =========================================================
+   START A SESSION (click a free machine)
+   ========================================================= */
+function openFreeModal(pc) {
+  modal.innerHTML = `
+    <h2>Start session · ${pc.code}</h2>
+    <p class="modal-sub">Walk-in customer</p>
+    <label for="cust">Name (optional)</label>
+    <input id="cust" type="text" placeholder="e.g. Rahul" />
+    <div id="modal-msg" class="msg"></div>
+    <div class="row">
+      <button class="btn-surface btn-block" data-close>Cancel</button>
+      <button class="btn-primary btn-block" id="confirm-start">Start</button>
+    </div>
+    <p class="note">Members will be added in the next build step.</p>`;
+  openOverlay();
+  document.getElementById("confirm-start").addEventListener("click", () => startSession(pc));
+  document.getElementById("cust").focus();
+}
+
+async function startSession(pc) {
+  const name = document.getElementById("cust").value.trim();
+  const mmsg = document.getElementById("modal-msg");
+  mmsg.textContent = "Starting…"; mmsg.className = "msg";
+
+  // 1. create the visit (session)
+  const { data: session, error: sErr } = await sb
+    .from("sessions")
+    .insert({ customer_type: "walkin", customer_name: name || null })
+    .select("id").single();
+  if (sErr) { mmsg.textContent = sErr.message; mmsg.className = "msg error"; return; }
+
+  // 2. open a segment on this PC. The DB's unique rule blocks a second
+  //    open segment on one PC, so if two people grab it at once, one fails.
+  const { error: segErr } = await sb
+    .from("session_segments")
+    .insert({ session_id: session.id, pc_id: pc.id });
+
+  if (segErr) {
+    // roll the empty session back so we don't leave an orphan
+    await sb.from("sessions").update({ ended_at: new Date().toISOString() }).eq("id", session.id);
+    mmsg.textContent = "That machine just became busy. Refreshing…";
+    mmsg.className = "msg error";
+    await loadFloor();
+    return;
+  }
+  closeOverlay();
+  await loadFloor();
+}
+
+/* =========================================================
+   BUSY MACHINE (click it): move the customer, or end.
+   ========================================================= */
+function openBusyModal(pc) {
+  const info = busyByPc[pc.id];
+  if (!info) { loadFloor(); return; }
+  modal.innerHTML = `
+    <h2>${pc.code} · ${escapeHtml(info.customer)}</h2>
+    <p class="modal-sub mono" id="modal-timer">${formatDuration(Date.now() - info.sessionStart.getTime())}</p>
+    <div id="modal-msg" class="msg"></div>
+    <button class="btn-surface btn-block" id="move-btn" style="margin-bottom:10px;">Move to another machine</button>
+    <div id="move-picker"></div>
+    <button class="btn-danger btn-block" id="end-btn">End session</button>
+    <div class="row" style="margin-top:12px;">
+      <button class="btn-ghost btn-block" data-close>Close</button>
+    </div>`;
+  openOverlay();
+
+  // keep the modal timer ticking too
+  const t = setInterval(() => {
+    const el = document.getElementById("modal-timer");
+    if (!el) { clearInterval(t); return; }
+    el.textContent = formatDuration(Date.now() - info.sessionStart.getTime());
+  }, 1000);
+
+  document.getElementById("end-btn").addEventListener("click", () => endSession(info.session_id));
+  document.getElementById("move-btn").addEventListener("click", () => showMovePicker(pc, info.session_id));
+}
+
+function showMovePicker(fromPc, sessionId) {
+  const freePcs = pcs.filter(p => !busyByPc[p.id]);
+  const picker = document.getElementById("move-picker");
+  if (freePcs.length === 0) {
+    picker.innerHTML = `<p class="note">No free machines to move to.</p>`;
+    return;
+  }
+  picker.innerHTML = `
+    <p class="note" style="margin-top:0">Move to:</p>
+    <div class="pc-picker">
+      ${freePcs.map(p => `<button data-move="${p.id}">${p.code}</button>`).join("")}
+    </div>`;
+  picker.querySelectorAll("[data-move]").forEach(btn => {
+    btn.addEventListener("click", () => moveSession(sessionId, Number(btn.getAttribute("data-move"))));
+  });
+}
+
+async function moveSession(sessionId, toPcId) {
+  const mmsg = document.getElementById("modal-msg");
+  mmsg.textContent = "Moving…"; mmsg.className = "msg";
+  const now = new Date().toISOString();
+
+  // 1. close the current open segment (the stretch on the old PC)
+  const { error: closeErr } = await sb
+    .from("session_segments").update({ ended_at: now })
+    .eq("session_id", sessionId).is("ended_at", null);
+  if (closeErr) { mmsg.textContent = closeErr.message; mmsg.className = "msg error"; return; }
+
+  // 2. open a new segment on the new PC — same session, so the visit continues
+  const { error: openErr } = await sb
+    .from("session_segments").insert({ session_id: sessionId, pc_id: toPcId });
+  if (openErr) {
+    mmsg.textContent = "That machine just became busy. Refreshing…";
+    mmsg.className = "msg error";
+    await loadFloor();
+    return;
+  }
+  closeOverlay();
+  await loadFloor();
+}
+
+async function endSession(sessionId) {
+  const mmsg = document.getElementById("modal-msg");
+  mmsg.textContent = "Ending…"; mmsg.className = "msg";
+
+  // Billing runs on the SERVER, not here: we just say "end this session"
+  // and the database computes the minutes, applies the discount, and
+  // stores the amount. The browser never decides what a session costs.
+  const { data, error } = await sb.rpc("end_session", { p_session_id: sessionId });
+  if (error) { mmsg.textContent = error.message; mmsg.className = "msg error"; return; }
+
+  await loadFloor();
+
+  const r = data && data[0];
+  if (r && r.amount !== null && r.amount !== undefined) {
+    showEndSummary(r);   // walk-in: show the bill
+  } else {
+    closeOverlay();      // member: no per-visit charge
+  }
+}
+
+function showEndSummary(r) {
+  modal.innerHTML = `
+    <h2>Session ended</h2>
+    <p class="modal-sub">Amount to collect</p>
+    <div class="bill-amount">₹${Number(r.amount).toFixed(2)}</div>
+    <p class="note" style="margin-top:2px">
+      ${r.total_minutes} min played · ${r.chargeable_minutes} charged · ${r.discount_minutes} free
+    </p>
+    <button class="btn-primary btn-block" data-close style="margin-top:18px;">Done</button>`;
+  openOverlay();
+}
+
+/* =========================================================
+   modal open/close helpers
+   ========================================================= */
+function openOverlay() { overlay.classList.add("open"); }
+function closeOverlay() { overlay.classList.remove("open"); }
+overlay.addEventListener("click", e => {
+  if (e.target === overlay || e.target.hasAttribute("data-close")) closeOverlay();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeOverlay(); });
+
+/* tiny helper: keep typed names safe to drop into HTML */
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+</script>
+</body>
+</html>
